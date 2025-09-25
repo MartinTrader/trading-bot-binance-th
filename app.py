@@ -70,25 +70,26 @@ def webhook():
         if not data:
             return jsonify({"error": "Keine Daten empfangen"}), 400
         action = data.get('action')
-        symbol = data.get('ticker', 'SOLUSDT')  # Nutzt {{ticker}}, Fallback auf SOLUSDT
-        order_size = data.get('order_size', '0%').strip('%')
+        symbol = "SOLUSDT"  # Fest auf SOLUSDT gesetzt
         if action.lower() == 'buy':
             usdt_balance = get_available_balance('USDT')
             if usdt_balance <= 10:  # Mindestbetrag für Gebühren
                 return jsonify({"error": "Nicht genug USDT"}), 400
-            # Hole aktuellen Preis (geschätzt, besser via API)
-            price = 60.0  # Passe an aktuellen SOL/USDT-Preis an!
-            quantity = usdt_balance / price if order_size == '100' else float(data.get('quantity', 0))
-            if quantity <= 0:
-                return jsonify({"error": "Ungültige Menge"}), 400
+            # Hole aktuellen Preis
+            ticker_price = binance_request('GET', '/api/v3/ticker/price', {'symbol': symbol})
+            price = float(ticker_price['price']) if 'price' in ticker_price else 60.0
+            quantity = usdt_balance / price
+            if quantity * price < 10:  # Mindestorder von 10 USDT
+                return jsonify({"error": "Menge zu klein"}), 400
             params = {'symbol': symbol, 'side': 'BUY', 'type': 'MARKET', 'quantity': quantity}
             order = binance_request('POST', '/api/v3/order', params)
         elif action.lower() == 'sell':
-            asset = symbol.split('USDT')[0]  # z. B. "SOL" aus "SOLUSDT"
-            balance = get_available_balance(asset)
-            if balance <= 0:
-                return jsonify({"error": "Kein " + asset + " verfügbar"}), 400
-            quantity = balance if order_size == '100' else float(data.get('quantity', 0))
+            sol_balance = get_available_balance('SOL')
+            if sol_balance <= 0:
+                return jsonify({"error": "Kein SOL verfügbar"}), 400
+            quantity = sol_balance
+            if quantity * 60 < 10:  # Geschätzter Mindestwert
+                return jsonify({"error": "Menge zu klein"}), 400
             params = {'symbol': symbol, 'side': 'SELL', 'type': 'MARKET', 'quantity': quantity}
             order = binance_request('POST', '/api/v3/order', params)
         else:

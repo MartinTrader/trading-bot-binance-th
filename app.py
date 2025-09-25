@@ -14,28 +14,34 @@ BASE_URL = "https://api.binance.th"
 def get_server_time():
     try:
         response = requests.get(f"{BASE_URL}/api/v3/time")
-        return response.json()['serverTime']
+        if response.status_code == 200:
+            return response.json()['serverTime']
     except:
-        return int(time.time() * 1000)
+        pass
+    return int(time.time() * 1000)
 
-def create_signature(params):
-    query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items()) if v is not None])
+def create_signature(query_string):
     return hmac.new(API_SECRET.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
 
 def binance_request(method, endpoint, params=None):
     if params is None:
         params = {}
-    params['timestamp'] = get_server_time()
+    timestamp = get_server_time()
+    params['timestamp'] = timestamp
     params['recvWindow'] = 5000
-    query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items()) if k != 'signature'])
-    params['signature'] = create_signature({k: v for k, v in params.items() if k != 'signature'})
+    query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
+    params['signature'] = create_signature(query_string)
     headers = {'X-MBX-APIKEY': API_KEY}
+    url = f"{BASE_URL}{endpoint}"
     if method.upper() == 'POST':
-        response = requests.post(f"{BASE_URL}{endpoint}", headers=headers, params=params)
+        response = requests.post(url, headers=headers, params=params)
     else:
-        response = requests.get(f"{BASE_URL}{endpoint}", headers=headers, params=params)
+        response = requests.get(url, headers=headers, params=params)
+    print(f"Debug: Method={method}, URL={url}, Status={response.status_code}, Response={response.text[:200]}")  # Debug-Log (kurz)
     if response.status_code == 401:
-        return {"error": "401 Unauthorized - Prüfe IP-Restriktionen oder Keys in Binance TH"}
+        return {"error": f"401 Unauthorized - Response: {response.text}"}
+    if response.status_code != 200:
+        return {"error": f"HTTP {response.status_code}: {response.text}"}
     return response.json()
 
 @app.route('/')
@@ -44,11 +50,11 @@ def home():
 
 @app.route('/test')
 def test_api():
-    # Einfacher Test: Hole Account-Info (sollte funktionieren, wenn Keys/IP okay)
+    # Test: Hole Account-Info (sollte funktionieren, wenn Keys/IP okay)
     account = binance_request('GET', '/api/v3/account')
     if 'error' in account:
         return jsonify(account), 500
-    return jsonify({"status": "API-Verbindung OK", "account_balances": len(account.get('balances', []))}), 200
+    return jsonify({"status": "API-Verbindung OK", "balances_count": len(account.get('balances', []))}), 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -63,13 +69,11 @@ def webhook():
             return jsonify({"error": "Fehlende Parameter"}), 400
 
         if action.lower() == 'buy':
-            endpoint = "/api/v3/order"
             params = {'symbol': symbol, 'side': 'BUY', 'type': 'MARKET', 'quantity': quantity}
-            order = binance_request('POST', endpoint, params)
+            order = binance_request('POST', '/api/v3/order', params)
         elif action.lower() == 'sell':
-            endpoint = "/api/v3/order"
             params = {'symbol': symbol, 'side': 'SELL', 'type': 'MARKET', 'quantity': quantity}
-            order = binance_request('POST', endpoint, params)
+            order = binance_request('POST', '/api/v3/order', params)
         else:
             return jsonify({"error": "Ungültige Action"}), 400
 

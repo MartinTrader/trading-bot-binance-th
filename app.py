@@ -9,7 +9,7 @@ app = Flask(__name__)
 # Deine Binance TH API-Daten
 API_KEY = "DCD7A79DCB2B96F602758BD960183E90B422ADA8BDF914699F3A4AAD386C8B95"
 API_SECRET = "2FFE68A5CA379904DE5E395A44F6571744735056393B3BBE48AB854B22C399FA"
-BASE_URL = "https://api.binance.th"
+BASE_URL = "https://api.binance.com"  # Geändert von api.binance.th zu api.binance.com
 
 def get_server_time():
     try:
@@ -73,7 +73,7 @@ def test_api():
     # Test 2: Account (mit Auth)
     account = binance_request('GET', '/api/v3/account')
     if 'error' in account:
-        return jsonify({"status": "Ping OK", "ping_status": ping_status, "account_error": account['error']}), 500
+        return jsonify({"status": "Ping failed" if ping_status != 200 else "Ping OK", "ping_status": ping_status, "account_error": account['error']}), 500
     return jsonify({"status": "API-Verbindung OK", "ping_status": ping_status, "balances_count": len(account.get('balances', []))}), 200
 
 @app.route('/webhook', methods=['POST'])

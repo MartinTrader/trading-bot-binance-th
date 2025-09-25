@@ -33,19 +33,24 @@ def binance_request(method, endpoint, params=None):
     params['signature'] = create_signature(query_string)
     headers = {'X-MBX-APIKEY': API_KEY}
     url = f"{BASE_URL}{endpoint}"
-    if method.upper() == 'POST':
-        response = requests.post(url, headers=headers, params=params)
-    else:
-        response = requests.get(url, headers=headers, params=params)
-    print(f"Debug: Method={method}, URL={url}, Status={response.status_code}, Response={response.text[:200]}")
-    if response.status_code == 401:
-        return {"error": f"401 Unauthorized - Response: {response.text}"}
-    if response.status_code != 200:
-        return {"error": f"HTTP {response.status_code}: {response.text}"}
-    return response.json()
+    try:
+        if method.upper() == 'POST':
+            response = requests.post(url, headers=headers, params=params)
+        else:
+            response = requests.get(url, headers=headers, params=params)
+        print(f"Debug: Method={method}, URL={url}, Status={response.status_code}, Response={response.text[:200]}")
+        if response.status_code == 401:
+            return {"error": f"401 Unauthorized - Response: {response.text}"}
+        if response.status_code != 200:
+            return {"error": f"HTTP {response.status_code}: {response.text}"}
+        return response.json()
+    except Exception as e:
+        return {"error": f"Request failed: {str(e)}"}
 
 def get_available_balance(asset):
     account = binance_request('GET', '/api/v3/account')
+    if 'error' in account:
+        return 0.0
     if 'balances' in account:
         for balance in account['balances']:
             if balance['asset'] == asset and float(balance['free']) > 0:
@@ -70,16 +75,17 @@ def webhook():
         if not data:
             return jsonify({"error": "Keine Daten empfangen"}), 400
         action = data.get('action')
-        symbol = "SOLUSDT"  # Fest auf SOLUSDT gesetzt
+        symbol = "SOLUSDT"
         if action.lower() == 'buy':
             usdt_balance = get_available_balance('USDT')
-            if usdt_balance <= 10:  # Mindestbetrag für Gebühren
+            if usdt_balance <= 10:
                 return jsonify({"error": "Nicht genug USDT"}), 400
-            # Hole aktuellen Preis
             ticker_price = binance_request('GET', '/api/v3/ticker/price', {'symbol': symbol})
-            price = float(ticker_price['price']) if 'price' in ticker_price else 60.0
+            if 'error' in ticker_price:
+                return jsonify({"error": f"Preisabfrage fehlgeschlagen: {ticker_price['error']}"}), 500
+            price = float(ticker_price['price'])
             quantity = usdt_balance / price
-            if quantity * price < 10:  # Mindestorder von 10 USDT
+            if quantity * price < 10:
                 return jsonify({"error": "Menge zu klein"}), 400
             params = {'symbol': symbol, 'side': 'BUY', 'type': 'MARKET', 'quantity': quantity}
             order = binance_request('POST', '/api/v3/order', params)
@@ -88,19 +94,22 @@ def webhook():
             if sol_balance <= 0:
                 return jsonify({"error": "Kein SOL verfügbar"}), 400
             quantity = sol_balance
-            if quantity * 60 < 10:  # Geschätzter Mindestwert
+            ticker_price = binance_request('GET', '/api/v3/ticker/price', {'symbol': symbol})
+            price = float(ticker_price['price']) if 'price' in ticker_price else 60.0
+            if quantity * price < 10:
                 return jsonify({"error": "Menge zu klein"}), 400
             params = {'symbol': symbol, 'side': 'SELL', 'type': 'MARKET', 'quantity': quantity}
             order = binance_request('POST', '/api/v3/order', params)
         else:
             return jsonify({"error": "Ungültige Action"}), 400
 
+        if 'error' in order:
+            return jsonify(order), 500
         if isinstance(order, dict) and 'orderId' in order:
             return jsonify({"status": "success", "order_id": order['orderId']}), 200
-        else:
-            return jsonify({"error": str(order)}), 500
+        return jsonify({"error": "Unbekannter Fehler"}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500)
+        return jsonify({"error": str(e)}), 500  # Korrigierte Zeile
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)

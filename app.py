@@ -1,4 +1,3 @@
-import os
 import hmac
 import hashlib
 import time
@@ -7,29 +6,49 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Deine Binance TH API-Daten (sicherer: später in Render-Env-Variablen)
+# Deine Binance TH API-Daten
 API_KEY = "DCD7A79DCB2B96F602758BD960183E90B422ADA8BDF914699F3A4AAD386C8B95"
 API_SECRET = "2FFE68A5CA379904DE5E395A44F6571744735056393B3BBE48AB854B22C399FA"
 BASE_URL = "https://api.binance.th"
 
-def create_signature(query_string):
+def get_server_time():
+    try:
+        response = requests.get(f"{BASE_URL}/api/v3/time")
+        return response.json()['serverTime']
+    except:
+        return int(time.time() * 1000)
+
+def create_signature(params):
+    query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items()) if v is not None])
     return hmac.new(API_SECRET.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
 
 def binance_request(method, endpoint, params=None):
     if params is None:
         params = {}
-    params['timestamp'] = int(time.time() * 1000)
-    query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
-    signature = create_signature(query_string)
-    params['signature'] = signature
-    url = f"{BASE_URL}{endpoint}?{query_string}"
+    params['timestamp'] = get_server_time()
+    params['recvWindow'] = 5000
+    query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items()) if k != 'signature'])
+    params['signature'] = create_signature({k: v for k, v in params.items() if k != 'signature'})
     headers = {'X-MBX-APIKEY': API_KEY}
-    response = requests.request(method, url, headers=headers)
+    if method.upper() == 'POST':
+        response = requests.post(f"{BASE_URL}{endpoint}", headers=headers, params=params)
+    else:
+        response = requests.get(f"{BASE_URL}{endpoint}", headers=headers, params=params)
+    if response.status_code == 401:
+        return {"error": "401 Unauthorized - Prüfe IP-Restriktionen oder Keys in Binance TH"}
     return response.json()
 
 @app.route('/')
 def home():
     return "Hallo, mein Trading-Roboter ist bereit! (Webhook-Test mit Binance TH)"
+
+@app.route('/test')
+def test_api():
+    # Einfacher Test: Hole Account-Info (sollte funktionieren, wenn Keys/IP okay)
+    account = binance_request('GET', '/api/v3/account')
+    if 'error' in account:
+        return jsonify(account), 500
+    return jsonify({"status": "API-Verbindung OK", "account_balances": len(account.get('balances', []))}), 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -54,7 +73,7 @@ def webhook():
         else:
             return jsonify({"error": "Ungültige Action"}), 400
 
-        if 'orderId' in order:
+        if isinstance(order, dict) and 'orderId' in order:
             return jsonify({"status": "success", "order_id": order['orderId']}), 200
         else:
             return jsonify({"error": str(order)}), 500

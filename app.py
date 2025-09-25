@@ -37,12 +37,20 @@ def binance_request(method, endpoint, params=None):
         response = requests.post(url, headers=headers, params=params)
     else:
         response = requests.get(url, headers=headers, params=params)
-    print(f"Debug: Method={method}, URL={url}, Status={response.status_code}, Response={response.text[:200]}")  # Debug-Log (kurz)
+    print(f"Debug: Method={method}, URL={url}, Status={response.status_code}, Response={response.text[:200]}")
     if response.status_code == 401:
         return {"error": f"401 Unauthorized - Response: {response.text}"}
     if response.status_code != 200:
         return {"error": f"HTTP {response.status_code}: {response.text}"}
     return response.json()
+
+def get_available_balance(asset):
+    account = binance_request('GET', '/api/v3/account')
+    if 'balances' in account:
+        for balance in account['balances']:
+            if balance['asset'] == asset and float(balance['free']) > 0:
+                return float(balance['free'])
+    return 0.0
 
 @app.route('/')
 def home():
@@ -50,7 +58,6 @@ def home():
 
 @app.route('/test')
 def test_api():
-    # Test: Hole Account-Info (sollte funktionieren, wenn Keys/IP okay)
     account = binance_request('GET', '/api/v3/account')
     if 'error' in account:
         return jsonify(account), 500
@@ -63,15 +70,25 @@ def webhook():
         if not data:
             return jsonify({"error": "Keine Daten empfangen"}), 400
         action = data.get('action')
-        symbol = data.get('symbol')
-        quantity = float(data.get('quantity', 0))
-        if not all([action, symbol, quantity]):
-            return jsonify({"error": "Fehlende Parameter"}), 400
-
+        symbol = data.get('ticker', 'SOLUSDT')  # Nutzt {{ticker}}, Fallback auf SOLUSDT
+        order_size = data.get('order_size', '0%').strip('%')
         if action.lower() == 'buy':
+            usdt_balance = get_available_balance('USDT')
+            if usdt_balance <= 10:  # Mindestbetrag für Gebühren
+                return jsonify({"error": "Nicht genug USDT"}), 400
+            # Hole aktuellen Preis (geschätzt, besser via API)
+            price = 60.0  # Passe an aktuellen SOL/USDT-Preis an!
+            quantity = usdt_balance / price if order_size == '100' else float(data.get('quantity', 0))
+            if quantity <= 0:
+                return jsonify({"error": "Ungültige Menge"}), 400
             params = {'symbol': symbol, 'side': 'BUY', 'type': 'MARKET', 'quantity': quantity}
             order = binance_request('POST', '/api/v3/order', params)
         elif action.lower() == 'sell':
+            asset = symbol.split('USDT')[0]  # z. B. "SOL" aus "SOLUSDT"
+            balance = get_available_balance(asset)
+            if balance <= 0:
+                return jsonify({"error": "Kein " + asset + " verfügbar"}), 400
+            quantity = balance if order_size == '100' else float(data.get('quantity', 0))
             params = {'symbol': symbol, 'side': 'SELL', 'type': 'MARKET', 'quantity': quantity}
             order = binance_request('POST', '/api/v3/order', params)
         else:
@@ -82,7 +99,7 @@ def webhook():
         else:
             return jsonify({"error": str(order)}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 500)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)

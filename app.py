@@ -14,10 +14,11 @@ BASE_URL = "https://api.binance.th"
 def get_server_time():
     try:
         response = requests.get(f"{BASE_URL}/api/v3/time")
+        print(f"Debug Time: Status={response.status_code}, Response={response.text[:100]}")
         if response.status_code == 200:
             return response.json()['serverTime']
-    except:
-        pass
+    except Exception as e:
+        print(f"Debug Time Error: {str(e)}")
     return int(time.time() * 1000)
 
 def create_signature(query_string):
@@ -38,7 +39,7 @@ def binance_request(method, endpoint, params=None):
             response = requests.post(url, headers=headers, params=params)
         else:
             response = requests.get(url, headers=headers, params=params)
-        print(f"Debug: Method={method}, URL={url}, Status={response.status_code}, Response={response.text[:200]}")
+        print(f"Debug Request: Method={method}, Endpoint={endpoint}, Query={query_string[:100]}..., Signature={params['signature'][:20]}..., Status={response.status_code}, Response={response.text[:200]}")
         if response.status_code == 401:
             return {"error": f"401 Unauthorized - Response: {response.text}"}
         if response.status_code != 200:
@@ -63,10 +64,17 @@ def home():
 
 @app.route('/test')
 def test_api():
+    # Test 1: Ping (keine Auth)
+    ping = requests.get(f"{BASE_URL}/api/v3/ping")
+    ping_status = ping.status_code
+    ping_response = ping.text
+    print(f"Debug Ping: Status={ping_status}, Response={ping_response}")
+
+    # Test 2: Account (mit Auth)
     account = binance_request('GET', '/api/v3/account')
     if 'error' in account:
-        return jsonify(account), 500
-    return jsonify({"status": "API-Verbindung OK", "balances_count": len(account.get('balances', []))}), 200
+        return jsonify({"status": "Ping OK", "ping_status": ping_status, "account_error": account['error']}), 500
+    return jsonify({"status": "API-Verbindung OK", "ping_status": ping_status, "balances_count": len(account.get('balances', []))}), 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -109,7 +117,7 @@ def webhook():
             return jsonify({"status": "success", "order_id": order['orderId']}), 200
         return jsonify({"error": "Unbekannter Fehler"}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500  # Korrigierte Zeile
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
